@@ -15,6 +15,9 @@
 11. [Adding objects to parametrisation](#adding-objects-to-parametrisation)
 12. [Testing exceptions](#testing-exceptions)
 13. [Failing tests](#failing-tests)
+14. [Managing dependencies for tests](#managing-dependencies-for-tests)
+15. [Dependencies as objects (fixtures)](#dependencies-as-objects-fixtures)
+16. [Testing wide setup and teardown (conftest)](#testing-wide-setup-and-teardown-conftest)
 
 # Using this guide
 
@@ -560,7 +563,9 @@ def test_validate_result_range(in_list: list[Any], exception: Any) -> None:
 
 Running your tests (with the initial call commented out) should give you about 75% coverage, with just the collect_result_1 and process_results not covered.
 
-Go ahead and make one of the test cases in the collect_result_2 test fail. We don't want to trigger the exception just yet, so alter one of the expected values and run pytest again.
+## Task time
+
+- Go ahead and make one of the test cases in the collect_result_2 test fail. We don't want to trigger the exception just yet, so alter one of the expected values and run pytest again.
 
 You will now get a longer test output, which will report 1 failed test. If you scroll up you will se the logging for the failed test. Scroll to the top of that section (the first red lines, which report the name of the test).
 
@@ -578,60 +583,364 @@ Before you fix your test, add a couple of print statements to your code, one in 
 
 # Managing dependencies for tests
 
-Almost every process in your code will have a dependency on something in order to operate correctly. We can split these out into three types (not an exhaustive list, but good enough for illustrative purposes):
+Almost every process in your code will have a dependency on something in order to operate correctly. We can split these out into a (non exhaustive list) of three types:
 
-A function depending on one or more parameters that are passed into it (I.e., most functions)
+1. A function depending on one or more parameters that are passed into it (e.g., combine_results)
 
-A function depending on one or more processes that it calls directly from inside the function (e.g., call a cleansing function on a value before operating on it)
+   - We handle this through parametrization. By having discrete functions and discrete tests, we can easily supply the relevant dummy values at the point in which we call the function in the test.
 
-A function depending on some other object that exists outside the process flow (e.g., a log file or a raw data file).
+2. A function depending on some other object that exists outside the process flow (e.g., collect_result_2, sort of).
 
-We handle the first case through parametrization. By having discrete functions and discrete tests, we can easily supply the relevant dummy values at the point in which we call the function in the test.
+   - Here we set up the objects we require as part of the test. This is the second part of a 'good unit test' that we skipped over before. With collect_result_2, we make use of the TEST_RESULTS dictionary - for us, this is a constant. But in reality it could be sourced from a file, or generated at runtime. For testing, we would have to provide that object to the test (remembering our rule - no real data)
 
-The second case is the most complex, as the dependency is another object that itself would need testing. How can we assure the functionality of one thing that itself relies on the something that we need to assure? There’s a few options for how to approach this, but will be discussed in more detail in the last section on mocking and patching. For reference, an example of this is the process_results function, which calls on the other functions.
-
-The third case will require you to set up various objects in, and around, the specific test, in order to set the right conditions for the test to operate in. Taking the case of a log file and a function which appends a record to the log, but only if a log for that activity doesn’t already exist. To correctly test this function, you would need: No log file, an empty log file, a log file with records for other activities, a log file with a log for that activity and a log file with a combination of logs.
+3. A function depending on the output or operation of one or more processes that itself calls (e.g., process_results)
+   - This is the most complex, as the dependency is another object that itself would need testing. How can we assure the functionality of one thing that itself relies on the something that we need to assure? There’s a few options for how to approach this, which will be discussed in more detail later on.
 
 Example:
+We are going to put case 3 to one side for now and focus on case 2, for which we don't have a great example at the moment. So we are going to expand our example by adding a logging mechanism. We will record every output that is generated and the three result values that were used; we will also configure it to not log the same output more than once, providing some nuance to test against.
 
-We expand the functionality of our pipeline by adding a logging mechanism, which creates a dependency on an ‘external’ object. In this case, we log every result that is generated and the three result values used. Crucially, we don’t add the same result more than once (which will provide our nuance to test against).
+We also introduce the use of classes here to encapsulate our logging logic. Classes confer lots of functionality and benefits for data pipelines, but this lies outside the topic of automated testing. For our purpose, we will create a log and a method for writing the log to file.
 
-We make use of classes here to encapsulate our logging logic. There’s loads of general benefits to using classes within your code, which lie outside the topic of automated testing. For our purposes, we can create our own logs and call the write_log method on it to test that the method works as expected.
+In your imports, add the following:
 
-The log class can take in the path to the log as a parameter. It has a default value for this and in ordinary operation you do not need to overwrite it. B the flexibility to change it is useful for some operations. And in line with the principle of using dummy data, we can make dummy logs in a separate location to the real one and feed these in.
+```
+import json
+from pathlib import Path
+from typing import Union
+```
 
-The init function then checks if the path exists (I.e., the file exists). If it does, it loads it, otherwise it creates it as an empty dictionary. This is a neat way of taking the existing log if it exists, or generating a new one if not.
+At the top of your application file (above combine_result and below TEST_RESULTS), add the following:
 
-The write log method then appends to the log a new record, containing the result as the key, and the full set of three results as its values – but only if that result is not found in the key already.
+```
+class Log:
+"""Class to generate and update the log"""
 
-You can run this code repeatedly, generating each different result value. You’ll see that it never errors out, but that any duplicate result values are never written to the log.
+    def __init__(self, log_path: Path = Path("data/log.json")) -> None:
+        self.log_path = log_path
+        if self.log_path.exists():
+            with open(self.log_path, "r", encoding="utf=8") as f:
+                self.log: dict[str, list[Union[int, str, float]]] = json.load(f)
+        else:
+            self.log = {}
 
-There are various specific things we could test with our new functionality, but to showcase the principle of supplying external dependencies, we will test that the write_log function generates the correct log each time.
+    def write_log(self, result: int, results: list[Union[int, str, float]]) -> None:
+        """Writes entry to the log if this result has not been seen before"""
+        if str(result) not in self.log:
+            self.log[str(result)] = results
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                json.dump(self.log, f, indent=4)
+```
+
+Then replace your process_results function with:
+
+```
+def process_results(input_result_range: list[int], input_test_type: str) -> int:
+    """Print out the sum of the results"""
+    validate_result_range(input_result_range)
+    validate_test_type(input_test_type)
+
+    result_1 = collect_result_1(input_result_range)
+    result_2 = collect_result_2(input_test_type)
+    result_3 = "number_3"
+    output = combine_results(result_1, result_2, result_3)
+
+    log = Log()
+    log.write_log(output, [result_1, result_2, result_3])
+```
+
+The log class has an initialisation method which goes to a given file path and loads the existing log if there is one, otherwise it return an empty dictionary (log). The path itself can be a parameter we pass in - which is always useful for reusability, but also testing (as we can pass in a test file path and not affect any real data).
+
+The write_log method takes the output and the three individual results as parameters. If the result is already in the log, then this will do nothing, otherwise it will append a new key:value pair to the log (output: results) and then write out the update log.
+
+process_results instatiates an instance of the Log class, upon which we can call the write_log method (passing in the relevant arguments). To do this, it explicitly stores the output of combine_results as a variable so that it can be passed to the write_log method.
+
+You can run this code repeatedly, generating each different result value. You’ll see that it never errors out, but that any duplicate result values are never written to the log. You can delete the log to start again, as the code will just generate an empty log.
+
+## Question time
+
+1 - What functionality could we test?
+2 - What scenarios should we test?
+
+Functionality:
+
+- Reading in a log, or generating a blank one.
+- Checking if the output is already in the log
+- Appending the log entry
+- Writing out the log
+
+Scenarios:
+
+- Log exists / does not exist
+- ouput value is in log / is not in log
+
+In order to correctly simulate the 3 scenario combinations, we need to build a custom log object (or not) to pass in to the test function to alter its behaviour each time.
 
 There are two approaches we can take to feed in different logs to the write_log function.
 
-We can physically create different JSON files and feed their paths to the Log class, then call write_log on the class (providing different result sets)
+## Example
 
-The same as the above, but create the logs as dictionary objects directly and skip having to read the files in
+Update your imports as follows:
 
-One of these approaches is more problematic than the other. Can you see which it is and why?
+```
+import json
+import pytest
 
-The first approach still relies on a dependency. The reading of the log occurs in the **init** method of the Log class. If we physically create the log files, instantiate the Log class (with our bespoke log paths passed in) and then use the logs it generates, this is dependent upon that process to work correctly. If the **init** method is incorrect in any way, then our testing of the write_log method might fail incorrectly.
+from contextlib import nullcontext as does_not_raise
+from typing import Any, Union
+from pathlib import Path
 
-The second approach removes that dependency and essentially operates on the assumption that **init** works correctly (as it will be tested with its own tests).
+from app import application as app
+```
 
-Having said that, both methods are shown here, as there will be cases where generating files will be the correct approach (such as testing the **init** method).
+Then add this new test to the bottom of your test file:
 
-This is method 1, with the generation of a physical file. Here you can see how tests can become a little more complex with the addition of generating dependencies. Our test sets a custom log_path (to ensure we do not operate on any real data) and then creates a log file at that location with the parametrized contents. We instantiate the Log class, call the write_log method and then re-read the log file back in and compare it to the expected log contents.
+```
+@pytest.mark.parametrize(
+    ["log", "outcome", "results", "exp_log"],
+    [
+        (
+            {},
+            6,
+            [2, 1.5, "2.5"],
+            {"6": [2, 1.5, "2.5"]},
+        ),
+    ],
+)
+def test_write_log(
+    log: dict[str, list[Union[int, str, float]]],
+    outcome: int,
+    results: list[Union[int, float, str]],
+    exp_log: dict[str, list[Union[int, str, float]]],
+) -> None:
+    """Test write_log function by generating the existing log directly"""
 
-As noted above, this approach has a dependency on the Log class reading the log file in correctly (which is not strictly tested here). Or at least, if the test fails, it is not inherently clear if the issue lies with the writing of the log, or the reading of it.
+    log_path = Path("data/test_log.json")
 
-The last line deletes the test file. This is a useful thing to do to ensure that files do not hang around between tests and potentially impact on another tests’ outcomes.
+    if log:
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log, f)
 
-There are ways to manage more complex dependencies and parametrized objects (in this case, the dictionaries being passed in) through objects themselves. This helps promote reusability and reduces the amount of lengthy hardcoding of values – this will be discussed below.
+    logger = app.Log(log_path)
+    logger.write_log(outcome, results)
 
-To properly implement method 2, we would have to use mocking/patching to bypass the **init** method of the Log class; these concepts are handled below. So for now, we are going to bodge the above code to illustrate the example of creating the logs directly.
+    with open(log_path, "r", encoding="utf=8") as f:
+        actual_log = json.load(f)
 
-You can do this by adding this line of code: ‘logger.log = log’ just underneath logger = Log(log_path).
+    assert actual_log == exp_log
 
-What this does is directly overwrite the ‘log’ object inside logger. So whilst it will use the **init** method and load our generated log file, we immediately overwrite it with our ‘log’ object we are passing in via the parametrize. In this particular case, it has no actual effect, as both generate the same log. But the principle holds that we have not actually relied on the **init** method to read in the log. As mentioned, at the end of this course, we will look at mocking and patching, which will remove the **init** method from the equation and simplify this approach.
+    log_path.unlink()
+```
+
+The structure of the test is the same as our existing ones, but we have additional logic in the body of the test and have begun to bring together lots of the key concepts for building unit tests.
+
+Our Log class takes the filepath for the log as an argument, allowing us to create a custom log at a specific path and provide that for the test to use. We can define our custom log for each test case as an object inside the parametrisation (as well as the expected log to compare against).
+
+In this scenario, we are testing where there is no existing log (an empty dictionary). We set the test to only write out a file if that dummy log is populated - this allows us to use one function to test all scenarions.
+
+We instantiate the Log and call write_log in the same manner as in process_results. Then simply read in the log file from the same path and assert that its contents match our expected log.
+
+You can see how the complexity of tests can start increasing as you start having to manage dependencies to ensure you have robust unit tests.
+
+## Question time
+
+1. What key principle have we adhered to in the set up of our test?
+2. What principle have we not adhered to?
+
+By passing in a different path for the log, we have ensured we used dummy data and do not risk interfering what anything occuring in our real data/log.json file. It is not always possible to pass in values like this as part of the test (for example, the value might be accessed from the internet and be out of your control) - we will discuss handling these cases later.
+
+We have tested the \_\_init\_\_ and write_log methods together. We relied on the init method to load our log, before validating the logic of write_log against that log. What if our init method is wrong?
+
+In simple cases like this, it doesn't really matter, as it will be obvious where any issues are if a test fails because either the init or write_log methods are wrong. However, the principle we want to adhere to as much as possible is for a unit test to validate the logic of a single thing.
+
+If you're writing comprehensive tests, you can operate on an assumption that another test will validate the init method, and therefore relying on it here is fine because that test will also fail (if init is incorrect). Then fixing init will lead both tests to pass.
+
+Another option is to restructure your code. You could instead have a standalone function which loads log files, then you pass the log as an object directly to the Log class (removing the dependency on the Log class to load the data).
+
+## Task time
+
+- Can you add 2 or more test cases to cover the remaining scenarios?
+
+You could have something that looks like this:
+
+```
+(
+    {"5.1": [2, 3.1, "1"]},
+    6,
+    [2, 1.5, "2.5"],
+    {"5.1": [2, 3.1, "1"], "6": [2, 1.5, "2.5"]},
+),
+(
+    {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+    6,
+    [2, 1.5, "2.5"],
+    {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+),
+```
+
+# Dependencies as objects (fixtures)
+
+Pytest fixtures provide a way of formalising the definition of dependency objects within the pytest framework. There is a whole world of functionality that they provide (https://docs.pytest.org/en/6.2.x/fixture.html). For this guide, we will just explore some basic usage whereby we will define an object to be used across multiple tests.
+
+A fixture is a function, appended with the fixture decorator
+
+```
+@pytest.fixture
+```
+
+The fixture function has a unique name and returns an object. We can pass the fixture into a test (using its name) and pytest will automatically run the fixture and make its return value available to the test. This negates the need to have additional setup logic in the test itself. The fixture can be called by any number of tests, providing repeated savings in setup logic. This is especially useful if you have some core objects that a lot of your logic is built around (e.g., a class with a lot of methods to be tested, you can use a fixture to build a baseline instantiation of the class).
+
+You could encapsulate the same logic in a regular function (as both will return objects that you can use in your test). Whilst this is true, fixtures provide deeper functionality that will be of use in more comprehensive test suites. Our example here will be simple, leaving you to explore fixtures at the above link at your own leisure.
+
+## Example
+
+Add this new test to the bottom of your test file
+
+```
+@pytest.fixture()
+def log() -> dict[str, list[Union[int, str, float]]]:
+    return {"5.1": [2, 3.1, "1"]}
+
+
+def test_write_log_fixture(
+    log: dict[str, list[Union[int, str, float]]],
+) -> None:
+    """Test write_log function by generating the existing log directly"""
+
+    log_path = Path("data/test_log.json")
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log, f)
+
+    logger = app.Log(log_path)
+    logger.write_log(3, [1, 1.0, "1"])
+
+    with open(log_path, "r", encoding="utf=8") as f:
+        actual_log = json.load(f)
+
+    assert actual_log == {"5.1": [2, 3.1, "1"], "3": [1, 1.0, "1"]}
+
+    log_path.unlink()
+```
+
+The test itself is unchanged (other than removing the parametrisation logic). The log fixture is automatically passed in to the test by pytest (as the names match) and we can use the returned value as usual.
+
+The use of 'log' within the test is using the actual object returned, which means (in this case) you can perform any dictionary operations on it that you would be able to normally (similarly if the return value was a list, class, function, etc.,). This means you can alter the fixture contents within tests in order to provide more bespoke behaviour across test scenarios.
+
+In order to achieve the same functionality as we had before, we need a way to parametrise the generation of the log object (using the regular parametrise functionality and altering the log after the fact would negate any value of the fixture). This is unfortunately not as simple as just using a regular function. You can see an example of this in the linked documentation about 80% of the way down under 'Factories as fixtures' and then some more sections on parametrisation.
+
+The principle is that you can return a function from the fixture; that function itself takes parameters. You then call the function as normal in your test and pass in the arguments dynamically (which can be delivered from the parametrise decorator).
+
+As mentioned above, it may be simpler to use regular functions for a lot of this behaviour unles you're going to dive into the deeper end of what fixtures can do.
+
+# Testing wide setup and teardown (conftest)
+
+Pytest automatically searches for a ‘conftest’ file when it sets up your tests. This is a file that lets you configure various objects to be used across multiple test files, I.e., fixtures. You can have one conftest file per directory in your overall test directory, allowing you to define some objects for every single test, or just a subset of tests.
+
+You can read more about fixtures in the conftest file here: https://docs.pytest.org/en/7.1.x/reference/fixtures.html
+
+This is an example of a conftest.py file from Atlas to show that you can use it for other things. Firstly, we create a directory – this test directory is used by all subsequent tests and therefore makes sense to generate at test setup.
+
+Secondly, we define a pytest_unconfigure function. This is a function that Pytest looks to see if it exists, if it does, it runs it. Here we can define code to execute at the end of the tests. In Atlas we use it to clear up the test directory we made at the start.
+
+Managing complex dependencies and pipelines – Mocking and patching
+
+As discussed previously, sometimes the function you wish to test is dependent upon other functions or objects. The output of these other objects may affect the outcome of the to-be tested function. This can make testing problematic because:
+
+It may be hard to define a fixed expected value if the other function(s) do not always return the same value. This could be due to some randomness or because the other functions rely on some external data – the contents of which might change
+
+Some of the functions may interact with an external source, such as downloading a file. You a) can’t guarantee the download will be successful and b) don’t want to be working with real data in tests
+
+The other functions would require their own testing, you shouldn’t rely on their successful operation in determining whether the target function is correct
+
+The sub-functions may form a lengthy or complex pipeline. Your tests want to assess a single ‘unit’ of functionality – if the test is actually calling dozens of lines of code, you can’t be certain of what you’re testing, or what caused the test to fail
+
+Some of the sub-processes might take a long time to complete, making your test suite slow to run. For reference, Atlas has hundreds of unit tests which complete in less than 10 seconds
+
+The solution provided by pytest is to mock out these other functions and objects. This is simply a process of replacing the actual thing with some dummy code – which can be as simple or as complex as required.
+
+Note: There is an argument to be made for not worrying about mocking out some very simple dependencies. Consider a function which takes in two values, calls a second function to alter one of the values, then sums the two values together. You could test the second function independently (useful to do, as it could be re-used elsewhere) and then test the first function, retaining its call to the second, with the assumption that the second function is correct.
+
+Example:
+
+This is the most basic application of the mocking capability. The first case has altered nothing and will call the process_results function as normal. We have passed in a list of strings as the result range to intentionally trigger the exception we added to the validate_result_range function. If you run that test, you will see the exception raised in the output, proving that the validation function is called within the process_results function.
+
+The second case makes use of the patch functionality to replace the validate function – in this case, with nothing. If you run the second test, it still fails, but the error is the original error (before we added our exception), whereby it states it can not add a string and an integer together. This shows that the validation function is patched out, as its actual code does not trigger and raise an exception.
+
+We can define our patch in a slightly different way, which achieves the same functionality, by using the ‘with’ keyword.
+
+This is functionally the same, and is likely preferred for simpler use cases. If you need to mock multiple objects, then each would need to be within a nested ‘with’ keyword, quickly becoming untidy.
+
+Patching order and paths
+
+When you wish to patch multiple objects and are passing them into the test (the first example above), you also need to define them as arguments in the test function. The order in which you define the arguments is in reverse order to the list of decorators:
+
+Here, function 1 is the last decorator, but is the first parameter (‘mock_1’):
+
+In a more complex project, you may have a file that defines some core functions (e.g., read data, write data, transforming values) and then a second file which imports those functions to use in some processing functions (such as the process_results function).
+
+If you wish to test the process_results function, but mock out one of the dependent functions that come from the second file, then you need to ‘mock the object at import, not definition’.
+
+Let’s say you have a ‘processing’ folder with two files in it.
+
+Util.py with a read_data function
+
+Functions.py with a process_results function
+
+Functions.py will import the read_data function (‘from processing.util import read_data’).
+
+Your test file will import process_results from functions.py - which also then imports read_data from util.py. The important thing here is that you don’t mock the definition of read_data from util.py, you mock the imported version from functions.py.
+
+Thus, your patch for read_data would read: ‘@mock.patch(“processing.functions.read_data)’ instead of ‘@mock.patch(“processing.util.read_data)’
+
+This is because the functions.py file generates a reference to read_data when it is imported into that file, it is this ‘version’ of it that is used by the process_results function. So you mock the imported version of it, by pointing the patch to the functions file, and not the util file.
+
+Making patches functional – Return values
+
+Whilst it is really useful to patch out the functionality of some objects, which can markedly decrease the complexity of dependencies and the time tests take to run. Sometimes you still need an output from that function. For example, a function might return a value that is used in a calculation. If you simply remove that functionality, not only will there not be a value (causing an incorrect result), but the variable itself won’t be defined (and your code will error out).
+
+You can define return values for your mocked functions – these values can be anything, including other objects (the next section handles cases where you want to include apply some logic, such as a function).
+
+Example
+
+Here we are mocking out the two functions which collect results 1 and 2 and provide our own pre-set return values. We have combined this with parametrize to allow us to test this with multiple sets of input values.
+
+The MagicMock classs has multiple useful attributes and methods (some of which are discussed below), one of these is ‘return_value’ which enables us to directly set the value to be returned. You can see that we call process_results as normal, it does not matter which values we pass into this function, as the two ‘collect’ functions will always return the values we specified.
+
+This approach is some way along the path to testing the process_results function without any interaction from its dependencies. You can apply the same process to the validation functions (though they have no return value). You may decide to keep the combine function in place.
+
+You would probably wish to mock out the write_log function, so that you are not writing a test log into your actual log. This isn’t done here, as it’s a class method, and is discussed below.
+
+There is a valid question of: ‘if you mock out all of these functions and fix their return values, then what exactly is the point of testing the process_results function?’. This was just an example using our existing code to illustrate the use of return values, in reality, a function like this would be better testing by validating that the correct components are called. This is a process flow function, that is
+not focused on transforming data, but rather managing the orchestration of other functions which do. Some neat methods for validating these kinds of things are discussed later.
+
+Making patches functional and dynamic - Side effects
+
+Side effects useful to remove if it has an effect rather than returning something – like creating a file – may need to remove or alter this
+
+Side effects used where the return value is conditional – so that it can be dynamic.
+
+If we are mocking out a function which contains complex or conditional processes, then we may need to replicate some of its logic. This is even more crucial if our data is within more complex objects, such as dictionaries and DataFrames, where its potentially messy or too complicated to directly create return values. It may also be that the mocked functions work with objects that are created inside the function being tested, and therefore can’t be generated and passed in as parameters.
+
+Consider this process:
+
+A function takes in our three results – this is the function being tested
+
+One of our three results is selected and passed into a second function:
+
+This function connects to a database and returns a dataset of results (plus other values) into a DataFrame
+
+It calls a function which does some calculations on the selected result
+
+The returned values are added to the DataFrame – the DF is returns
+
+The return DataFrame is passed to a third function which takes the DataFrame and produces some kind of report
+
+We would want to mock out the second function, because we wouldn’t want to use a real DB, or DB connection, in our tests.
+
+Assert called etc.,
+
+Dictionaries, classes, property mock, methods
+
+Built ins
+
+Capturing print messages

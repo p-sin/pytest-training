@@ -1,7 +1,29 @@
+import json
 import random
 from math import ceil, floor
+from pathlib import Path
+from typing import Union
 
 TEST_RESULTS: dict[str, float] = {"easy": 23.8, "medium": 49.9, "hard": 105.1}
+
+
+class Log:
+    """Class to generate and update the log"""
+
+    def __init__(self, log_path: Path = Path("data/log.json")) -> None:
+        self.log_path = log_path
+        if self.log_path.exists():
+            with open(self.log_path, "r", encoding="utf=8") as f:
+                self.log: dict[str, list[Union[int, str, float]]] = json.load(f)
+        else:
+            self.log = {}
+
+    def write_log(self, output: int, results: list[Union[int, str, float]]) -> None:
+        """Writes entry to the log if this result has not been seen before"""
+        if str(output) not in self.log:
+            self.log[str(output)] = results
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                json.dump(self.log, f, indent=4)
 
 
 def combine_results(result_1: int, result_2: float, result_3: str) -> int:
@@ -37,7 +59,7 @@ def validate_test_type(test_type: str) -> None:
         raise ValueError(f"Provided test_type: {test_type} is not a valid test type")
 
 
-def process_results(input_result_range: list[int], input_test_type: str) -> None:
+def process_results(input_result_range: list[int], input_test_type: str) -> int:
     """Print out the sum of the results"""
     validate_result_range(input_result_range)
     validate_test_type(input_test_type)
@@ -45,7 +67,10 @@ def process_results(input_result_range: list[int], input_test_type: str) -> None
     result_1 = collect_result_1(input_result_range)
     result_2 = collect_result_2(input_test_type)
     result_3 = "number_3"
-    print(combine_results(result_1, result_2, result_3))
+    output = combine_results(result_1, result_2, result_3)
+
+    log = Log()
+    log.write_log(output, [result_1, result_2, result_3])
 
 
 # process_results(input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium")

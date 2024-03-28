@@ -1,7 +1,9 @@
-from contextlib import nullcontext as does_not_raise
-from typing import Any
-
+import json
 import pytest
+
+from contextlib import nullcontext as does_not_raise
+from typing import Any, Union
+from pathlib import Path
 
 from app import application as app
 
@@ -130,3 +132,77 @@ def test_validate_test_type(in_type: str, exception: Any) -> None:
     invalid list"""
     with exception:
         app.validate_test_type(in_type)
+
+
+@pytest.mark.parametrize(
+    ["log", "outcome", "results", "exp_log"],
+    [
+        (
+            {},
+            6,
+            [2, 1.5, "2.5"],
+            {"6": [2, 1.5, "2.5"]},
+        ),
+        (
+            {"5.1": [2, 3.1, "1"]},
+            6,
+            [2, 1.5, "2.5"],
+            {"5.1": [2, 3.1, "1"], "6": [2, 1.5, "2.5"]},
+        ),
+        (
+            {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+            6,
+            [2, 1.5, "2.5"],
+            {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+        ),
+    ],
+)
+def test_write_log(
+    log: dict[str, list[Union[int, str, float]]],
+    outcome: int,
+    results: list[Union[int, float, str]],
+    exp_log: dict[str, list[Union[int, str, float]]],
+) -> None:
+    """Test write_log function by generating the existing log directly"""
+
+    log_path = Path("data/test_log.json")
+
+    if log:
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log, f)
+
+    logger = app.Log(log_path)
+    logger.write_log(outcome, results)
+
+    with open(log_path, "r", encoding="utf=8") as f:
+        actual_log = json.load(f)
+
+    assert actual_log == exp_log
+
+    log_path.unlink()
+
+
+@pytest.fixture()
+def log() -> dict[str, list[Union[int, str, float]]]:
+    return {"5.1": [2, 3.1, "1"]}
+
+
+def test_write_log_fixture(
+    log: dict[str, list[Union[int, str, float]]],
+) -> None:
+    """Test write_log function by generating the existing log directly"""
+
+    log_path = Path("data/test_log.json")
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log, f)
+
+    logger = app.Log(log_path)
+    logger.write_log(3, [1, 1.0, "1"])
+
+    with open(log_path, "r", encoding="utf=8") as f:
+        actual_log = json.load(f)
+
+    assert actual_log == {"5.1": [2, 3.1, "1"], "3": [1, 1.0, "1"]}
+
+    log_path.unlink()
