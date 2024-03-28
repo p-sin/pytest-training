@@ -182,11 +182,6 @@ def test_write_log(
     log_path.unlink()
 
 
-@pytest.fixture()
-def log() -> dict[str, list[Union[int, str, float]]]:
-    return {"5.1": [2, 3.1, "1"]}
-
-
 def test_write_log_fixture(
     log: dict[str, list[Union[int, str, float]]],
 ) -> None:

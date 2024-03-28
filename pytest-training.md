@@ -18,6 +18,7 @@
 14. [Managing dependencies for tests](#managing-dependencies-for-tests)
 15. [Dependencies as objects (fixtures)](#dependencies-as-objects-fixtures)
 16. [Testing wide setup and teardown (conftest)](#testing-wide-setup-and-teardown-conftest)
+17. [Managing complex dependencies and pipelines (patching)](#managing-complex-dependencies-and-pipelines-patching)
 
 # Using this guide
 
@@ -593,7 +594,7 @@ Almost every process in your code will have a dependency on something in order t
 
    - Here we set up the objects we require as part of the test. This is the second part of a 'good unit test' that we skipped over before. With collect_result_2, we make use of the TEST_RESULTS dictionary - for us, this is a constant. But in reality it could be sourced from a file, or generated at runtime. For testing, we would have to provide that object to the test (remembering our rule - no real data)
 
-3. A function depending on the output or operation of one or more processes that itself calls (e.g., process_results)
+3. A function depending on the output or operation of one or more processes that it itself calls (e.g., process_results)
    - This is the most complex, as the dependency is another object that itself would need testing. How can we assure the functionality of one thing that itself relies on the something that we need to assure? There’s a few options for how to approach this, which will be discussed in more detail later on.
 
 Example:
@@ -834,31 +835,61 @@ As mentioned above, it may be simpler to use regular functions for a lot of this
 
 # Testing wide setup and teardown (conftest)
 
-Pytest automatically searches for a ‘conftest’ file when it sets up your tests. This is a file that lets you configure various objects to be used across multiple test files, I.e., fixtures. You can have one conftest file per directory in your overall test directory, allowing you to define some objects for every single test, or just a subset of tests.
+When you run pytest, it automatically searches for a ‘conftest.py’ file when it sets up your tests. This is a file that lets you configure various aspects of pytest and define objects to be used across multiple test files. You can have one conftest file per directory, allowing you to define objects for use across files in one, or mutliple folders.
+
+One common usage of the conftest files is to store fixtures. In this way, you can make the same fixture available to all test files in the same directory (or sub directories) without having to import anything into each file.
 
 You can read more about fixtures in the conftest file here: https://docs.pytest.org/en/7.1.x/reference/fixtures.html
 
-This is an example of a conftest.py file from Atlas to show that you can use it for other things. Firstly, we create a directory – this test directory is used by all subsequent tests and therefore makes sense to generate at test setup.
+## Example
 
-Secondly, we define a pytest_unconfigure function. This is a function that Pytest looks to see if it exists, if it does, it runs it. Here we can define code to execute at the end of the tests. In Atlas we use it to clear up the test directory we made at the start.
+If you are working with the repo from github, you already have a conftest file. Go into it and uncomment the log fixture and delete the version of it from your test file.
+If you have set up your own project, then create a conftest.py file in your tests folder. Then copy the log fixture to the conftest file and delete it from your test file.
 
-Managing complex dependencies and pipelines – Mocking and patching
+Your conftest should look like this:
 
-As discussed previously, sometimes the function you wish to test is dependent upon other functions or objects. The output of these other objects may affect the outcome of the to-be tested function. This can make testing problematic because:
+```
+from pathlib import Path
+from typing import Union
 
-It may be hard to define a fixed expected value if the other function(s) do not always return the same value. This could be due to some randomness or because the other functions rely on some external data – the contents of which might change
+import pytest
 
-Some of the functions may interact with an external source, such as downloading a file. You a) can’t guarantee the download will be successful and b) don’t want to be working with real data in tests
 
-The other functions would require their own testing, you shouldn’t rely on their successful operation in determining whether the target function is correct
+@pytest.fixture()
+def log() -> dict[str, list[Union[int, str, float]]]:
+    return {"5.1": [2, 3.1, "1"]}
+```
 
-The sub-functions may form a lengthy or complex pipeline. Your tests want to assess a single ‘unit’ of functionality – if the test is actually calling dozens of lines of code, you can’t be certain of what you’re testing, or what caused the test to fail
+Your tests will still run, picking up the log object from the conftest file, even though you haven't imported it.
 
-Some of the sub-processes might take a long time to complete, making your test suite slow to run. For reference, Atlas has hundreds of unit tests which complete in less than 10 seconds
+There is a second function in the conftest file (if you are in your own project, paste in the below).
 
-The solution provided by pytest is to mock out these other functions and objects. This is simply a process of replacing the actual thing with some dummy code – which can be as simple or as complex as required.
+```
+def pytest_unconfigure() -> None:
+    """Function called by pytest automatically once all tests are run to clean up test artifacts"""
 
-Note: There is an argument to be made for not worrying about mocking out some very simple dependencies. Consider a function which takes in two values, calls a second function to alter one of the values, then sums the two values together. You could test the second function independently (useful to do, as it could be re-used elsewhere) and then test the first function, retaining its call to the second, with the assumption that the second function is correct.
+    if Path("data/test_log.json").is_file():
+        Path("data/test_log.json").unlink()
+```
+
+This is an example of some of the magic that pytest can do. This is a function which pytest looks to see if it exists. If it does, it runs it, otherwise not. This particular function runs at the end of all of your tests (hence 'unconfigure') and can be used to provide definitive cleanup for your tests.
+
+# Managing complex dependencies and pipelines (patching)
+
+It is finally time for us to return to the third type of dependency for a unit test, which was: 'A function depending on the output or operation of one or more processes that it itself calls (e.g., process_results)'
+
+Whilst we have looked at creating and passing in test objects to supplant some dependencies, this is not always straightforward:
+
+1. The dependency might be one or more functions that the function we would like to test calls
+   - These functions could be nested 2 or more layers deep under other function calls (all part of a more complex pipeline). Tests want to assess a single unit, if we are actually executing dozens of lines of code, we can't be certain of what we're testing or what causes a test to fail
+   - The other functions require their own testing and you shouldn't rely on their succesful operation in determining if your target function is correct
+   - The functions might be undertaking processing that is not practical to complete within a test (e.g., accessing internet, accessing real data, etc.,). You can't guarantee the same result every time, which makes your tests unpredictable.
+   - The operations undertaken by these functions might be slow, which is miserable to sit through. Atlas has 557 tests which take less than 10 seconds to run
+2. The dependency might be an object, function or class which has its own behaviours (including automatic behaviours, such as init methods or properties)
+3. The dependency might be an object that is not relevant to the test in question and it is therefore a waste of time to replace it
+4. The function we are testing might itself be buried in some processes or objects (e.g., a method of class) which has its own behaviours that are either cumbersome to replace or could affect the outcome of the test
+
+We can make extensive use of the unittest library to patch out these objects. We can replace the object with nothing (for irrelevant items that we can ignore for the test) or we can impute our own logic (great for creating bespoke testing scenarios).
 
 Example:
 
@@ -944,3 +975,7 @@ Dictionaries, classes, property mock, methods
 Built ins
 
 Capturing print messages
+
+```
+
+```
