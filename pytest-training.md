@@ -13,12 +13,17 @@
 9. [Test comprehensiveness and repeatability](#test-comprehensiveness-and-repeatability)
 10. [Code coverage](#code-coverage)
 11. [Adding objects to parametrisation](#adding-objects-to-parametrisation)
-12. [Testing exceptions](#testing-exceptions)
-13. [Failing tests](#failing-tests)
-14. [Managing dependencies for tests](#managing-dependencies-for-tests)
-15. [Dependencies as objects (fixtures)](#dependencies-as-objects-fixtures)
-16. [Testing wide setup and teardown (conftest)](#testing-wide-setup-and-teardown-conftest)
-17. [Managing complex dependencies and pipelines (patching)](#managing-complex-dependencies-and-pipelines-patching)
+12. [Testing pandas DataFrames](#testing-pandas-dataframes)
+13. [Testing exceptions](#testing-exceptions)
+14. [Failing tests](#failing-tests)
+15. [Managing dependencies for tests](#managing-dependencies-for-tests)
+16. [Dependencies as objects (fixtures)](#dependencies-as-objects-fixtures)
+17. [Testing wide setup and teardown (conftest)](#testing-wide-setup-and-teardown-conftest)
+18. [Complex dependencies - patching (basic return values)](#complex-dependencies---patching-basic-return-values)
+19. [Patching order, 'with patch' and paths](#patching-order-with-patch-and-paths)
+20. [Complex dependencies - patching (complex side effects)](#complex-dependencies---patching-complex-side-effects)
+21. [Complex dependencies - patching (call count and args)](#complex-dependencies---patching-call-count-and-args)
+22. [Final items (dicts, properties, inits, methods, 3rd party and built-ins)](#final-items-dicts-properties-inits-methods-3rd-party-and-built-ins)
 
 # Using this guide
 
@@ -138,7 +143,19 @@ _Note_: You require '\_\_init\_\_.py' files inside each folder that contains com
 
 # Running pytest
 
-You call pytest from the command line with `pytest`. You can also direct it to specific folders/files by adding the path afterwards, e.g., `pytest tests/results/test_app.py`. Pytest iterates over the given directory (or entire project if no path given) and looks for tests to run.
+You call pytest from the command line with:
+
+```
+pytest
+```
+
+You can also direct it to specific folders/files by adding the path afterwards, e.g.,
+
+```
+pytest tests/results/test_app.py`
+```
+
+Pytest iterates over the given directory (or entire project if no path given) and looks for tests to run.
 
 It will search for files with a 'test\_' prefix (or suffix?) and run them. Within those files, it will run functions with a 'test\_' prefix. If you run the pytest command now, you should have 1 test passing.
 The complete set of tests in test_app.py are commented out, so they will not interfere with your code.
@@ -164,12 +181,20 @@ import random
 Delete the original initial call line from the bottom of the file and copy the following code below our existing combine_results function to add new 3 new functions and a new initial call.
 
 ```
-TEST_RESULTS: dict[str, float] = {"easy": 23.8, "medium": 49.9, "hard": 105.1}
+TEST_RESULTS: dict[str, float] = {"easy": 23.8, "medium": 49.9, "hard": 105.1,}
+
+
+def randomise_result(length: int) -> int:
+    """Randomly selects a number to be the index of the result range
+    to use"""
+    return random.choice(range(length))
 
 
 def collect_result_1(result_range: list[int]) -> int:
-    """Randomly selects a result from a provided list of results"""
-    return random.choice(result_range)
+    """Selects a result from a provided list of results using a random
+    number"""
+    index = randomise_result(len(result_range))
+    return result_range[index]
 
 
 def collect_result_2(test_type: str) -> float:
@@ -193,7 +218,7 @@ process_results(input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="m
 
 process_results contains our control flow and takes two arguments from our initial call. The first provides a list of potential values for result_1 and the second provides a type of test, which will define the value of result_2. Result 3 is hardcoded within the function. Note: This example is designed to be illustrative of the different kinds of things you might do, and how to test them.
 
-We have two new functions, which are called by our process_results function. The first selects a random number from the list of numbers - this becomes result_1. The second looks up the 'test type' in a dictionary and returns the corresponding value to become result_2.
+We have three new functions, which are called by our process_results function. collect_result_1 calls randomise_result which generates a random number from the length of the result list - it uses this number to index the result list, which becomes result_1. collect_result_2 looks up the 'test type' in a dictionary and returns the corresponding value to become result_2.
 
 # What are we actually testing?
 
@@ -241,7 +266,7 @@ def validate_result_range(result_range: list[int]) -> None:
 
 def validate_test_type(test_type: str) -> None:
     """Validates that the test type is valid"""
-    if not test_type in test_results:
+    if not test_type in TEST_RESULTS:
         raise ValueError(f"Provided test_type: {test_type} is not a valid test type")
 
 
@@ -452,6 +477,63 @@ Here we have:
 - Created a class with three attributes and passed those in
 - Called a function and passed in its output
 
+# Testing pandas Dataframes
+
+Dataframes are a commonly used data structure, especially for Data Science. If you test a function with a DataFrame output and attempt to asseert that DataFrame == an expected DataFrame, you will actually generate an error. This error tells you that you the truthfullness of the assertion is ambiguous (i.e., it doesn't know if they match or not).
+
+Fortunately pandas comes with its own testing functions which you can use to assert against your output.
+
+## Example
+
+Add an import for pandas to the top of your script:
+
+```
+import pandas as pd
+```
+
+Replace your process_results function and initial call with:
+
+```
+def process_results(input_result_range: list[int], input_test_type: str) -> pd.DataFrame:
+    """Print out the sum of the results"""
+    validate_result_range(input_result_range)
+    validate_test_type(input_test_type)
+
+    result_1 = collect_result_1(input_result_range)
+    result_2 = collect_result_2(input_test_type)
+    result_3 = "number_3"
+
+    output = combine_results(result_1, result_2, result_3)
+
+    return pd.DataFrame(
+        data={
+            "result_1": [result_1],
+            "result_2": [result_2],
+            "result_3": [result_3],
+            "sum": [output],
+        }
+    )
+
+
+print(
+    process_results(
+        input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium"
+    )
+)
+```
+
+We are now returning the result of our application as a DataFrame and printing it out. We can test that this DataFrame look as we expect.
+
+We are not going to write this test right now, because it will fail to pass (as it is reliant on the random output of the collect_result_1 function). However, to write DataFrame tests for your own code, you just need to know the syntx:
+
+```
+pd.testing.assert_frame_equal(df_1, df_2)
+```
+
+You pass in your actual and expected DataFrames and it will check if they are equal. At its base, this is a very strict test (indexes, data types, etc.,) which can be tricky to pass. Often your datatypes can be misalinged in tiny ways, requiring you to hammer your expected data into shape. You can configure which facets of the DataFrame are checked within the function call.
+
+There are also a few other assertions you can call on DataFrames - intelliense should present them to you when you access 'pd.testing.'
+
 # Testing exceptions
 
 We have a gap in the testing of our combine_results function, we have not proven that the exception is correctly raised. Because exceptions cause our code to stop executing, it is not possible to retun a value our generate any artifacts, providing nothing for us to assert against.
@@ -465,13 +547,16 @@ With pytest however, we can check whether an exception has been raised.
 At the top of your test file, add these imports:
 
 ```
+
 from contextlib import nullcontext as does_not_raise
 from typing import Any
+
 ```
 
 Then add a new test function to the bottom of the file
 
 ```
+
 @pytest.mark.parametrize(
     ["result_1", "result_2", "result_3", "exp_exception"],
     [
@@ -488,6 +573,7 @@ def test_combine_results_exception(
 
     with exp_exception:
         combine_results(result_1=result_1, result_2=result_2, result_3=result_3)
+
 
 ```
 
@@ -512,7 +598,7 @@ Pytest provides comprehensive logs for failed tests, which includes the specific
 
 ## Task time
 
-Write out a set of tests for the collect_result_2, validate_result_range and validate_test_type functions.
+Write out a set of tests for the randomise_result, collect_result_2, validate_result_range and validate_test_type functions.
 
 We won't test collect_result_1 at this time (can you guess why?)
 
@@ -526,7 +612,9 @@ Remember:
 As we are now importing more items from our application file, we can simplify our import to:
 
 ```
+
 from app import application as app
+
 ```
 
 You will then need to prefix all of your function calls with 'app.'
@@ -534,6 +622,7 @@ You will then need to prefix all of your function calls with 'app.'
 For collect_result_2, we could have something like this:
 
 ```
+
 @pytest.mark.parametrize(
     "in_val, exp_out_val", [("easy", 23.8), ("medium", 49.9), ("hard", 105.1)]
 )
@@ -542,11 +631,14 @@ def test_collect_result_2(in_val: str, exp_out_val: float) -> None:
     out_val = app.collect_result_2(in_val)
 
     assert out_val == exp_out_val
+
+
 ```
 
 For validate_result_range we could have something like this:
 
 ```
+
 @pytest.mark.parametrize(
     ["in_list", "exception"],
     [
@@ -560,9 +652,44 @@ def test_validate_result_range(in_list: list[Any], exception: Any) -> None:
     """Checks that the validate result range raises an exception when passed an invalid list"""
     with exception:
         app.validate_result_range(in_list)
+
 ```
 
-Running your tests (with the initial call commented out) should give you about 75% coverage, with just the collect_result_1 and process_results not covered.
+For validate_test_type we could have something like this:
+
+```
+@pytest.mark.parametrize(
+    ["in_type", "exception"],
+    [
+        ("EASY", pytest.raises(ValueError)),
+        ("mdium", pytest.raises(ValueError)),
+        ("Junk", pytest.raises(ValueError)),
+        ("hard", does_not_raise()),
+    ],
+)
+def test_validate_test_type(in_type: str, exception: Any) -> None:
+    """Checks that the validate result range raises an exception when passed an invalid list"""
+    with exception:
+        app.validate_test_type(in_type)
+```
+
+for randomise_result we could have something like this:
+
+```
+@pytest.mark.parametrize(
+    "length",
+    [
+        (1),
+        (10),
+    ],
+)
+def test_randomise_result(length: int) -> None:
+    for _ in range(100):
+        assert app.randomise_result(length) >= 0
+        assert app.randomise_result(length) <= length
+```
+
+Running your tests (with the initial call commented out) should give you about 70% coverage, with just the collect_result_1 and process_results not covered.
 
 ## Task time
 
@@ -577,7 +704,9 @@ You will now get a longer test output, which will report 1 failed test. If you s
 Note: Sometimes the assertion section gets truncated. If you are comparing large objects, it won’t render the full contents of each. Manually comparing the values the test actually checked is usually the quickest way of narrowing down the issue. You can get pytest to write out more with the –v option. Each ‘v’ adds more detail (up to 3 or 4). For example:
 
 ```
+
 pytest -vv
+
 ```
 
 Before you fix your test, add a couple of print statements to your code, one in the test and one in the function being tested. You can print whatever you like. After running the test, you should see a new section in the output called 'Captured stdout call' - this is where any print statements are captured. This is an invaluable tool for seeing what is happening during your tests.
@@ -594,7 +723,7 @@ Almost every process in your code will have a dependency on something in order t
 
    - Here we set up the objects we require as part of the test. This is the second part of a 'good unit test' that we skipped over before. With collect_result_2, we make use of the TEST_RESULTS dictionary - for us, this is a constant. But in reality it could be sourced from a file, or generated at runtime. For testing, we would have to provide that object to the test (remembering our rule - no real data)
 
-3. A function depending on the output or operation of one or more processes that it itself calls (e.g., process_results)
+3. A function depending on the output or operation of one or more processes that it itself calls (e.g., collect_result_1 and process_results)
    - This is the most complex, as the dependency is another object that itself would need testing. How can we assure the functionality of one thing that itself relies on the something that we need to assure? There’s a few options for how to approach this, which will be discussed in more detail later on.
 
 Example:
@@ -605,16 +734,19 @@ We also introduce the use of classes here to encapsulate our logging logic. Clas
 In your imports, add the following:
 
 ```
+
 import json
 from pathlib import Path
 from typing import Union
+
 ```
 
 At the top of your application file (above combine_result and below TEST_RESULTS), add the following:
 
 ```
+
 class Log:
-"""Class to generate and update the log"""
+    """Class to generate and update the log"""
 
     def __init__(self, log_path: Path = Path("data/log.json")) -> None:
         self.log_path = log_path
@@ -622,20 +754,23 @@ class Log:
             with open(self.log_path, "r", encoding="utf=8") as f:
                 self.log: dict[str, list[Union[int, str, float]]] = json.load(f)
         else:
+            self.log_path.parent.mkdir(exist_ok=True, parents=True)
             self.log = {}
 
-    def write_log(self, result: int, results: list[Union[int, str, float]]) -> None:
+    def write_log(self, output: int, results: list[Union[int, str, float]]) -> None:
         """Writes entry to the log if this result has not been seen before"""
-        if str(result) not in self.log:
-            self.log[str(result)] = results
+        if str(output) not in self.log:
+            self.log[str(output)] = results
             with open(self.log_path, "w", encoding="utf-8") as f:
                 json.dump(self.log, f, indent=4)
+
 ```
 
 Then replace your process_results function with:
 
 ```
-def process_results(input_result_range: list[int], input_test_type: str) -> int:
+
+def process_results(input_result_range: list[int], input_test_type: str) -> pd.DataFrame:
     """Print out the sum of the results"""
     validate_result_range(input_result_range)
     validate_test_type(input_test_type)
@@ -647,6 +782,16 @@ def process_results(input_result_range: list[int], input_test_type: str) -> int:
 
     log = Log()
     log.write_log(output, [result_1, result_2, result_3])
+
+    return pd.DataFrame(
+        data={
+            "result_1": [result_1],
+            "result_2": [result_2],
+            "result_3": [result_3],
+            "sum": [output],
+        }
+    )
+
 ```
 
 The log class has an initialisation method which goes to a given file path and loads the existing log if there is one, otherwise it return an empty dictionary (log). The path itself can be a parameter we pass in - which is always useful for reusability, but also testing (as we can pass in a test file path and not affect any real data).
@@ -683,6 +828,7 @@ There are two approaches we can take to feed in different logs to the write_log 
 Update your imports as follows:
 
 ```
+
 import json
 import pytest
 
@@ -691,11 +837,13 @@ from typing import Any, Union
 from pathlib import Path
 
 from app import application as app
+
 ```
 
 Then add this new test to the bottom of your test file:
 
 ```
+
 @pytest.mark.parametrize(
     ["log", "outcome", "results", "exp_log"],
     [
@@ -730,6 +878,7 @@ def test_write_log(
     assert actual_log == exp_log
 
     log_path.unlink()
+
 ```
 
 The structure of the test is the same as our existing ones, but we have additional logic in the body of the test and have begun to bring together lots of the key concepts for building unit tests.
@@ -764,18 +913,20 @@ Another option is to restructure your code. You could instead have a standalone 
 You could have something that looks like this:
 
 ```
+
 (
-    {"5.1": [2, 3.1, "1"]},
-    6,
-    [2, 1.5, "2.5"],
-    {"5.1": [2, 3.1, "1"], "6": [2, 1.5, "2.5"]},
+{"5.1": [2, 3.1, "1"]},
+6,
+[2, 1.5, "2.5"],
+{"5.1": [2, 3.1, "1"], "6": [2, 1.5, "2.5"]},
 ),
 (
-    {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
-    6,
-    [2, 1.5, "2.5"],
-    {"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+{"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
+6,
+[2, 1.5, "2.5"],
+{"6": [2, 1.5, "2.5"], "10": [9, 1.0, "0"]},
 ),
+
 ```
 
 # Dependencies as objects (fixtures)
@@ -797,14 +948,13 @@ You could encapsulate the same logic in a regular function (as both will return 
 Add this new test to the bottom of your test file
 
 ```
-@pytest.fixture()
-def log() -> dict[str, list[Union[int, str, float]]]:
+
+@pytest.fixture(name="log")
+def fix_log() -> dict[str, list[Union[int, str, float]]]:
     return {"5.1": [2, 3.1, "1"]}
 
 
-def test_write_log_fixture(
-    log: dict[str, list[Union[int, str, float]]],
-) -> None:
+def test_write_log_fixture(log: dict[str, list[Union[int, str, float]]]) -> None:
     """Test write_log function by generating the existing log directly"""
 
     log_path = Path("data/test_log.json")
@@ -821,6 +971,7 @@ def test_write_log_fixture(
     assert actual_log == {"5.1": [2, 3.1, "1"], "3": [1, 1.0, "1"]}
 
     log_path.unlink()
+
 ```
 
 The test itself is unchanged (other than removing the parametrisation logic). The log fixture is automatically passed in to the test by pytest (as the names match) and we can use the returned value as usual.
@@ -849,15 +1000,16 @@ If you have set up your own project, then create a conftest.py file in your test
 Your conftest should look like this:
 
 ```
+
 from pathlib import Path
 from typing import Union
 
 import pytest
 
-
 @pytest.fixture()
 def log() -> dict[str, list[Union[int, str, float]]]:
-    return {"5.1": [2, 3.1, "1"]}
+return {"5.1": [2, 3.1, "1"]}
+
 ```
 
 Your tests will still run, picking up the log object from the conftest file, even though you haven't imported it.
@@ -865,16 +1017,18 @@ Your tests will still run, picking up the log object from the conftest file, eve
 There is a second function in the conftest file (if you are in your own project, paste in the below).
 
 ```
+
 def pytest_unconfigure() -> None:
-    """Function called by pytest automatically once all tests are run to clean up test artifacts"""
+"""Function called by pytest automatically once all tests are run to clean up test artifacts"""
 
     if Path("data/test_log.json").is_file():
         Path("data/test_log.json").unlink()
+
 ```
 
 This is an example of some of the magic that pytest can do. This is a function which pytest looks to see if it exists. If it does, it runs it, otherwise not. This particular function runs at the end of all of your tests (hence 'unconfigure') and can be used to provide definitive cleanup for your tests.
 
-# Managing complex dependencies and pipelines (patching)
+# Complex dependencies - patching (basic return values)
 
 It is finally time for us to return to the third type of dependency for a unit test, which was: 'A function depending on the output or operation of one or more processes that it itself calls (e.g., process_results)'
 
@@ -891,91 +1045,283 @@ Whilst we have looked at creating and passing in test objects to supplant some d
 
 We can make extensive use of the unittest library to patch out these objects. We can replace the object with nothing (for irrelevant items for the test) or we can impute our own logic (great for creating bespoke testing scenarios).
 
-Example:
+## Example:
 
-This is the most basic application of the mocking capability. The first case has altered nothing and will call the process_results function as normal. We have passed in a list of strings as the result range to intentionally trigger the exception we added to the validate_result_range function. If you run that test, you will see the exception raised in the output, proving that the validation function is called within the process_results function.
+We have some real problems with testing the process_results function - it ticks a lot of the above criteria. Not least, because the collect_result_1 function relies on a random selection. There is no way to define a fixed expected output that would pass every time.
 
-The second case makes use of the patch functionality to replace the validate function – in this case, with nothing. If you run the second test, it still fails, but the error is the original error (before we added our exception), whereby it states it can not add a string and an integer together. This shows that the validation function is patched out, as its actual code does not trigger and raise an exception.
+To start, we will solve that problem and at least enable us to generate tests that pass consistently.
 
-We can define our patch in a slightly different way, which achieves the same functionality, by using the ‘with’ keyword.
+At the top of your test file, add these imports:
 
-This is functionally the same, and is likely preferred for simpler use cases. If you need to mock multiple objects, then each would need to be within a nested ‘with’ keyword, quickly becoming untidy.
+```
+import pandas as pd
+from unittest.mock import Mock, patch
+```
 
-Patching order and paths
+Add this function to the bottom of the tests file:
 
-When you wish to patch multiple objects and are passing them into the test (the first example above), you also need to define them as arguments in the test function. The order in which you define the arguments is in reverse order to the list of decorators:
+```
+@patch("app.application.collect_result_1")
+def test_process_results(mock_result_1: Mock) -> None:
 
-Here, function 1 is the last decorator, but is the first parameter (‘mock_1’):
+    mock_result_1.return_value = 1
 
-In a more complex project, you may have a file that defines some core functions (e.g., read data, write data, transforming values) and then a second file which imports those functions to use in some processing functions (such as the process_results function).
+    pd.testing.assert_frame_equal(
+        app.process_results([1, 2, 3], "easy"),
+        pd.DataFrame(
+            data={
+                "result_1": [1],
+                "result_2": [23.8],
+                "result_3": ["number_3"],
+                "sum": [27],
+            }
+        ),
+    )
+```
+
+The patch decorator takes in the path of the object to be patched and replaces it with a Mock object (which, at this point, is empty). As with parametrization, we have to pass that object in to the test as a parameter.
+
+Within the test, we can manipulate the patched object. Here we have used the functionality to fix its return value. So even though we pass a list of 1, 2 and 3 to the (what was) random selection, it will always return the value we specify.
+
+You can also specify the replacement value directly in the patch decorator, it is the second positional argument after the path to the object being patched.
+
+We (will) test the collect_result_1 function separately. From the perspective of process_results, we don't care what the actual output from collect_result_1 is - we are testing that process_results calls the correct functions and handles the inputs and outputs correctly. The actual values are irrelevant.
+
+# Complex dependencies - patching (basic side effects)
+
+As previously discussed, we don't want to rely on dependencies being correct when validating a function, therefore we should also patch out the other functions called by process_results.
+
+We will leave the Log for now. This is actually a problem case, because it is currently hardcoded to write the log to the main data/log.json file, which violates our separation of tests from the real data.
+
+## Example
+
+For now, update the process_results function to this:
+
+```
+@patch("app.application.validate_result_range")
+@patch("app.application.validate_test_type")
+@patch("app.application.collect_result_1")
+@patch("app.application.collect_result_2")
+@patch("app.application.combine_results")
+def test_process_results(
+    mock_combine: Mock,
+    mock_result_2: Mock,
+    mock_result_1: Mock,
+    mock_test_type: Mock,
+    mock_result_range: Mock,
+) -> None:
+
+    mock_result_1.return_value = "Not a valid int"
+    mock_result_2.return_value = False
+
+    mock_test_type.side_effect = None
+    mock_result_range.side_effect = None
+
+    mock_combine.return_value = 245
+
+    pd.testing.assert_frame_equal(
+        app.process_results([1, 2, 3], "easy"),
+        pd.DataFrame(
+            data={
+                "result_1": ["Not a valid int"],
+                "result_2": False,
+                "result_3": ["number_3"],
+                "sum": [245],
+            }
+        ),
+    )
+
+```
+
+We have replaced the 5 other functions called by process_results. To demonstrate the power of the patching, we have deliberately returned invalid values for result 1 and 2. But we set the side_effect (i.e., what the function does) for the two validate functions to None - so they do nothing and don't flag the result as invalid. We then hardcode the output from combine_results and don't actually run the code at all, meaning that we can get a very malformed DataFrame which still passes the test.
+
+Which of course is a little useless. As always, what are we testing here? Currently, only that a DataFrame is correctly generated from 4 given values. We have proved that our process_results function operates correctly as a control flow function.
+
+# Patching order, 'with patch' and paths
+
+## Patching order
+
+Before expanding our use of patches, you should note that when you patch multiple objects and pass them into the test, the order in which you define the arguments is in reverse order to the list of decorators:
+
+Here, validate_result_range is the first decorator, but is the last parameter (mock_result_range).
+
+## With patch
+
+You can also patch objects inside the test with the 'with' context manager:
+
+```
+with patch("app.application.validate_result_range") as mock_result_range:
+```
+
+This works exactly the same, then within the context manager you can assign return_values or side_effects as before. This simplifies your test signature, as you don't pass it in as an argument. You can chain multiple contexts within the same 'with' command, by commad separating them. However, this can become a little hard to decipher if you need to patch multiple objects.
+
+## Patching paths
+
+In a more complex project, you may have a file that defines some core functions (e.g., reading data, writing data, transforming values, etc.,) and then a second file which imports those functions to use in some processing functions (such as the process_results function).
 
 If you wish to test the process_results function, but mock out one of the dependent functions that come from the second file, then you need to ‘mock the object at import, not definition’.
 
-Let’s say you have a ‘processing’ folder with two files in it.
-
-Util.py with a read_data function
-
-Functions.py with a process_results function
-
-Functions.py will import the read_data function (‘from processing.util import read_data’).
-
-Your test file will import process_results from functions.py - which also then imports read_data from util.py. The important thing here is that you don’t mock the definition of read_data from util.py, you mock the imported version from functions.py.
-
-Thus, your patch for read_data would read: ‘@mock.patch(“processing.functions.read_data)’ instead of ‘@mock.patch(“processing.util.read_data)’
-
-This is because the functions.py file generates a reference to read_data when it is imported into that file, it is this ‘version’ of it that is used by the process_results function. So you mock the imported version of it, by pointing the patch to the functions file, and not the util file.
-
-Making patches functional – Return values
-
-Whilst it is really useful to patch out the functionality of some objects, which can markedly decrease the complexity of dependencies and the time tests take to run. Sometimes you still need an output from that function. For example, a function might return a value that is used in a calculation. If you simply remove that functionality, not only will there not be a value (causing an incorrect result), but the variable itself won’t be defined (and your code will error out).
-
-You can define return values for your mocked functions – these values can be anything, including other objects (the next section handles cases where you want to include apply some logic, such as a function).
-
-Example
-
-Here we are mocking out the two functions which collect results 1 and 2 and provide our own pre-set return values. We have combined this with parametrize to allow us to test this with multiple sets of input values.
-
-The MagicMock classs has multiple useful attributes and methods (some of which are discussed below), one of these is ‘return_value’ which enables us to directly set the value to be returned. You can see that we call process_results as normal, it does not matter which values we pass into this function, as the two ‘collect’ functions will always return the values we specified.
-
-This approach is some way along the path to testing the process_results function without any interaction from its dependencies. You can apply the same process to the validation functions (though they have no return value). You may decide to keep the combine function in place.
-
-You would probably wish to mock out the write_log function, so that you are not writing a test log into your actual log. This isn’t done here, as it’s a class method, and is discussed below.
-
-There is a valid question of: ‘if you mock out all of these functions and fix their return values, then what exactly is the point of testing the process_results function?’. This was just an example using our existing code to illustrate the use of return values, in reality, a function like this would be better testing by validating that the correct components are called. This is a process flow function, that is
-not focused on transforming data, but rather managing the orchestration of other functions which do. Some neat methods for validating these kinds of things are discussed later.
-
-Making patches functional and dynamic - Side effects
-
-Side effects useful to remove if it has an effect rather than returning something – like creating a file – may need to remove or alter this
-
-Side effects used where the return value is conditional – so that it can be dynamic.
-
-If we are mocking out a function which contains complex or conditional processes, then we may need to replicate some of its logic. This is even more crucial if our data is within more complex objects, such as dictionaries and DataFrames, where its potentially messy or too complicated to directly create return values. It may also be that the mocked functions work with objects that are created inside the function being tested, and therefore can’t be generated and passed in as parameters.
-
-Consider this process:
-
-A function takes in our three results – this is the function being tested
-
-One of our three results is selected and passed into a second function:
-
-This function connects to a database and returns a dataset of results (plus other values) into a DataFrame
-
-It calls a function which does some calculations on the selected result
-
-The returned values are added to the DataFrame – the DF is returns
-
-The return DataFrame is passed to a third function which takes the DataFrame and produces some kind of report
-
-We would want to mock out the second function, because we wouldn’t want to use a real DB, or DB connection, in our tests.
-
-Assert called etc.,
-
-Dictionaries, classes, property mock, methods
-
-Built ins
-
-Capturing print messages
+If we imagine that our collect_result_1 and collect_result_2 functions were in another file, then our application file would have an additional import:
 
 ```
+from app.collect_funcs import collect_result_1, collect_result_2
+```
+
+When it comes to testing process_results and patching these functions, you would keep the same path as used in the above example (i.e., 'app.application.collect_result_1'). You would not patch the patch 'app.collect_funcs.collect_result_1.
+
+This is because you are patching the version of the object used by process_results. Your main application file imports a copy of the function and therefore it is this version which needs to be patched.
+
+# Complex dependencies - patching (complex side effects)
+
+Up to now, we have not actually tested collect_result_1, as it relies on the randomise_result function. We now have the capability to bypass this dependency. We could patch it to have a fixed return value, but this is also an opportunity to show what can be done with side_effects.
+
+## Example
+
+Add the following to the bottom of the tests file:
 
 ```
+@pytest.mark.parametrize(
+    ["result_range", "exp_result"],
+    [
+        ([1, 2, 3, 4], 3),
+        ([4, 5, 6, 7, 8, 9], 7),
+    ],
+)
+@patch("app.application.randomise_result")
+def test_collect_result_1(
+    mock_random: Mock, result_range: list[int], exp_result: int
+) -> None:
+    def mock_random_func(length: int):
+        return round(length / 2)
+
+    mock_random.side_effect = mock_random_func
+
+    assert app.collect_result_1(result_range) == exp_result
+```
+
+We can pass functions as the side effect for the patched function, effectively replacing its original behaviour with bespoke behaviour for the test. In order to create a stable output from randomise_result we have returned an index value equal to half of the length. We can then assert that collect_result_1 will return a specific value, based on the length and content of the list we pass in. This means we have tested collect_result_1 with no dependency on the actual behaviour of randomise_result.
+
+# Complex dependencies - patching (call count and args)
+
+At this point we have finally reached 100% code coverage, but our testing of process_results is not very robust. We have just patched out a bunch of functionality, continued to use the real write_log method and checked that the junk DataFrame looks like the one we told it to make.
+
+When it comes to control flow functions, it is more useful to check whether the right functions have been called, in the right way. We can do this by interrograting which patches were called and the arguments they were called with.
+
+## Example
+
+This example will just apply the logic to the write_log method, to keep it simpler. The logic can be easily applied to the other patched functions.
+
+Replace your test_process_results function with:
+
+```
+@patch("app.application.validate_result_range")
+@patch("app.application.validate_test_type")
+@patch("app.application.collect_result_1")
+@patch("app.application.collect_result_2")
+@patch("app.application.combine_results")
+@patch("app.application.Log.write_log")
+def test_process_results(
+    mock_log: Mock,
+    mock_combine: Mock,
+    mock_result_2: Mock,
+    mock_result_1: Mock,
+    mock_test_type: Mock,
+    mock_result_range: Mock,
+) -> None:
+
+    mock_result_1.return_value = "Not a valid int"
+    mock_result_2.return_value = False
+
+    mock_test_type.side_effect = None
+    mock_result_range.side_effect = None
+
+    mock_combine.return_value = 245
+
+    pd.testing.assert_frame_equal(
+        app.process_results([1, 2, 3], "easy"),
+        pd.DataFrame(
+            data={
+                "result_1": ["Not a valid int"],
+                "result_2": False,
+                "result_3": ["number_3"],
+                "sum": [245],
+            }
+        ),
+    )
+    assert mock_log.call_count == 1
+    assert mock_log.call_args_list[0][0][0] == 245
+    assert mock_log.call_args_list[0][0][1] == ["Not a valid int", False, "number_3"]
+```
+
+This adds a patch to the write_log method.
+Note, that as a method of a class, the patch path goes via the Log class.
+Also note that we don't assign a return value or side effect to the method - we are just blanking it own (we could assign a side effect if we wished).
+
+We introduce two new asserts against patches. The first let's us query the number of times the patch was called (which proves it was run). We could apply the same logic to the other functions (this is quite useful if you conditional logic which will lead to different numbers of calls). There are various call related methods in the Mock library.
+
+Whilst we don't care what the patched functions do (or would do), we do care what arguments they are called with, as this is evidence that the control flow is operating correctly. We can access every argument passed, for every call, to a patched function. It can take a bit of practice to get the correct indexing for each value you want to check.
+
+When you consider the eventual complexity of this test (with similar asserts on all the functions), you might start thinking some of the thoughts that were discussed back at the beginning of this document - the signs that your functions are too complicated.
+
+It is definitely the case that this process_results function would be better off as 2 or 3 individual functions.
+
+# Final items (dicts, properties, inits, methods, 3rd party and built-ins)
+
+## Dictionaries
+
+Sometimes you will need to patch out dictionaries (e.g., if you're using them to map values to functionality). The default patch syntax does not work properly with dictionary items, instead you need to use:
+
+```
+@patch.dict("path.to.dict", [replacement_dict])
+```
+
+Here you can supply the new dictionary directly in the patch.
+
+## properties
+
+If you're making use of classes, you may also be defining some properties for that class. As these are automatically created and updated, it may be critical to the testing of a method of function to be able to manipulate that property.
+
+You will need to import an additional item from unittest:
+
+```
+from unittest.mock import PropertyMock
+```
+
+Then in your patch you will set the path to the property being mocked and set the 'new_callable' argument to 'PropertyMock'
+
+```
+@patch("app.application.log.[property_name], new_callable=PropertyMock)
+```
+
+Then you need to set the side effect for this patch, as above. Whatever the return value of that side effect is, that will be the value of the property when the class is instantiated as part of the test.
+
+## inits and methods
+
+We have already mocked a method - which can be done by pathing through the class object. However, you may want to replace the behaviour with custom behaviour (a side effect function), which is especially useful for init/post_init methods, as they run automatically.
+
+The issue is in the use of 'self' within class methods. When you define a class method, the first argument is always 'self' which relates to some python magic which automatically passes the class itself as a parameter to any of its class methods. You'll notice that our write_log method has a self argument, but when we call it in our code, we don't pass anything to it.
+
+When you create your mock function to replace the method, if you add a self argument to it, Python will not recognise that function as replacing a Class method. Therefore it will think 'self' is a regular argument and expect a value to be passed to it. However, when you run the test, which runs your actual code, you won't pass an argument to it (because in reality, Python would handle that for you, as the real method is a Class method).
+
+Essentially, there is a mismatch when patching a Class method, as Pytest and Python do not know that the replacement function is meant to be a class method.
+
+All that is to say, when you create the patch for the method (that you want to assign a side effect to), then add 'autospec=True' to the patch definition after the path. This will make it inherit the original methods signature. Your mock function can then define self (it's type will be of the Class the method belongs to)
+
+```
+@patch("app.application.Log.write_log", autospec=True)
+...
+def mock_log(self: Log, output: int, results: list[Union[int, str, float]]) -> None:
+...
+```
+
+## Built ins and third party libraries
+
+You can patch out built-in and 3rd party objects. If you are importing Path from pathlib, then you can use:
+
+```
+@patch("app.application.pathlib.Path)
+```
+
+If you alias the object (e.g., pandas as pd), then it will be "app.application.pd"
+
+Some functions are called 'built-ins', such as len(), abs(), open(). You can patch these too - look it up!

@@ -1,10 +1,16 @@
 import json
+import pandas as pd
 import random
+
 from math import ceil, floor
 from pathlib import Path
 from typing import Union
 
-TEST_RESULTS: dict[str, float] = {"easy": 23.8, "medium": 49.9, "hard": 105.1}
+TEST_RESULTS: dict[str, float] = {
+    "easy": 23.8,
+    "medium": 49.9,
+    "hard": 105.1,
+}
 
 
 class Log:
@@ -38,13 +44,22 @@ def combine_results(result_1: int, result_2: float, result_3: str) -> int:
         raise exc
 
 
+def randomise_result(length: int) -> int:
+    """Randomly selects a number to be the index of the result range
+    to use"""
+    return random.choice(range(length))
+
+
 def collect_result_1(result_range: list[int]) -> int:
-    """Randomly selects a result from a provided list of results"""
-    return random.choice(result_range)
+    """Selects a result from a provided list of results using a random
+    number"""
+    index = randomise_result(len(result_range))
+    return result_range[index]
 
 
 def collect_result_2(test_type: str) -> float:
     """Return a result based on the type of test taken"""
+
     return TEST_RESULTS[test_type]
 
 
@@ -60,7 +75,9 @@ def validate_test_type(test_type: str) -> None:
         raise ValueError(f"Provided test_type: {test_type} is not a valid test type")
 
 
-def process_results(input_result_range: list[int], input_test_type: str) -> None:
+def process_results(
+    input_result_range: list[int], input_test_type: str
+) -> pd.DataFrame:
     """Print out the sum of the results"""
     validate_result_range(input_result_range)
     validate_test_type(input_test_type)
@@ -73,5 +90,18 @@ def process_results(input_result_range: list[int], input_test_type: str) -> None
     log = Log()
     log.write_log(output, [result_1, result_2, result_3])
 
+    return pd.DataFrame(
+        data={
+            "result_1": [result_1],
+            "result_2": [result_2],
+            "result_3": [result_3],
+            "sum": [output],
+        }
+    )
 
-process_results(input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium")
+
+print(
+    process_results(
+        input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium"
+    )
+)
