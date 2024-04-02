@@ -16,6 +16,7 @@ class Log:
             with open(self.log_path, "r", encoding="utf=8") as f:
                 self.log: dict[str, list[Union[int, str, float]]] = json.load(f)
         else:
+            self.log_path.parent.mkdir(exist_ok=True, parents=True)
             self.log = {}
 
     def write_log(self, output: int, results: list[Union[int, str, float]]) -> None:
@@ -73,4 +74,4 @@ def process_results(input_result_range: list[int], input_test_type: str) -> int:
     log.write_log(output, [result_1, result_2, result_3])
 
 
-# process_results(input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium")
+process_results(input_result_range=[1, 1, 5, 12, 13, 14, 55], input_test_type="medium")
