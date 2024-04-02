@@ -1,17 +1,17 @@
-from pathlib import Path
-from typing import Union
+# from pathlib import Path
+# from typing import Union
 
-import pytest
-
-
-@pytest.fixture()
-def log() -> dict[str, list[Union[int, str, float]]]:
-    return {"5.1": [2, 3.1, "1"]}
+# import pytest
 
 
-def pytest_unconfigure() -> None:
-    """Function called by pytest automatically once all tests are run to
-    clean up test artifacts"""
+# @pytest.fixture()
+# def log() -> dict[str, list[Union[int, str, float]]]:
+#     return {"5.1": [2, 3.1, "1"]}
 
-    if Path("data/test_log.json").is_file():
-        Path("data/test_log.json").unlink()
+
+# def pytest_unconfigure() -> None:
+#     """Function called by pytest automatically once all tests are run to
+#     clean up test artifacts"""
+
+#     if Path("data/test_log.json").is_file():
+#         Path("data/test_log.json").unlink()
