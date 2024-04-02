@@ -889,7 +889,7 @@ Whilst we have looked at creating and passing in test objects to supplant some d
 3. The dependency might be an object that is not relevant to the test in question and it is therefore a waste of time to replace it
 4. The function we are testing might itself be buried in some processes or objects (e.g., a method of class) which has its own behaviours that are either cumbersome to replace or could affect the outcome of the test
 
-We can make extensive use of the unittest library to patch out these objects. We can replace the object with nothing (for irrelevant items that we can ignore for the test) or we can impute our own logic (great for creating bespoke testing scenarios).
+We can make extensive use of the unittest library to patch out these objects. We can replace the object with nothing (for irrelevant items for the test) or we can impute our own logic (great for creating bespoke testing scenarios).
 
 Example:
 

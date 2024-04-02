@@ -60,7 +60,7 @@ def validate_test_type(test_type: str) -> None:
         raise ValueError(f"Provided test_type: {test_type} is not a valid test type")
 
 
-def process_results(input_result_range: list[int], input_test_type: str) -> int:
+def process_results(input_result_range: list[int], input_test_type: str) -> None:
     """Print out the sum of the results"""
     validate_result_range(input_result_range)
     validate_test_type(input_test_type)
